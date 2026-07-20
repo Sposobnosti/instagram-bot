@@ -15,6 +15,11 @@ VERIFY_TOKEN = os.getenv("IG_VERIFY_TOKEN", "")
 # Page Access Token, полученный через Graph API Explorer / OAuth
 PAGE_ACCESS_TOKEN = os.getenv("IG_PAGE_ACCESS_TOKEN", "")
 
+# Instagram Business Account ID — получен в Meta for Developers при
+# подключении Instagram business login (App Dashboard → Instagram →
+# API setup with Instagram business login)
+IG_USER_ID = os.getenv("IG_USER_ID", "")
+
 # Версия Graph API (проверяйте актуальную в документации Meta)
 GRAPH_API_VERSION = os.getenv("IG_GRAPH_API_VERSION", "v21.0")
 
@@ -113,8 +118,8 @@ COMMENT_REPLY_VARIANTS = [
     "Ты записан 🕊️ Ответ ждёт в Direct",
 ]
 
-if not VERIFY_TOKEN or not PAGE_ACCESS_TOKEN:
+if not VERIFY_TOKEN or not PAGE_ACCESS_TOKEN or not IG_USER_ID:
     raise RuntimeError(
-        "Не заданы IG_VERIFY_TOKEN и/или IG_PAGE_ACCESS_TOKEN. "
-        "Проверьте файл .env"
+        "Не заданы IG_VERIFY_TOKEN и/или IG_PAGE_ACCESS_TOKEN и/или IG_USER_ID. "
+        "Проверьте переменные окружения"
     )

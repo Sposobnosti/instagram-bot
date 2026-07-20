@@ -24,6 +24,7 @@ from fastapi import FastAPI, Request, Response
 from config import (
     VERIFY_TOKEN,
     PAGE_ACCESS_TOKEN,
+    IG_USER_ID,
     GRAPH_API_VERSION,
     AUTO_REPLY_DM_TEXT,
     COMMENT_REPLY_VARIANTS,
@@ -35,7 +36,11 @@ logger = logging.getLogger("instagram_bot")
 
 app = FastAPI(title="Instagram Auto-Reply Bot")
 
-GRAPH_API_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
+# Новый Instagram API с бизнес-логином работает через graph.instagram.com,
+# а не через graph.facebook.com — это важно, иначе запросы будут падать
+# с ошибками авторизации даже с правильным токеном.
+GRAPH_API_BASE = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
+AUTH_HEADERS = {"Authorization": f"Bearer {PAGE_ACCESS_TOKEN}"}
 
 
 # ---------------------------------------------------------------------------
@@ -115,15 +120,14 @@ def build_dm_reply(incoming_text: str) -> str:
 
 
 async def send_direct_message(recipient_id: str, text: str):
-    url = f"{GRAPH_API_BASE}/me/messages"
+    url = f"{GRAPH_API_BASE}/{IG_USER_ID}/messages"
     payload = {
         "recipient": {"id": recipient_id},
         "message": {"text": text},
     }
-    params = {"access_token": PAGE_ACCESS_TOKEN}
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, json=payload, params=params)
+        resp = await client.post(url, json=payload, headers=AUTH_HEADERS)
         if resp.status_code != 200:
             logger.error("Ошибка отправки Direct-сообщения: %s", resp.text)
         else:
@@ -167,10 +171,9 @@ def build_comment_reply(incoming_text: str) -> str:
 async def reply_to_comment(comment_id: str, text: str):
     url = f"{GRAPH_API_BASE}/{comment_id}/replies"
     payload = {"message": text}
-    params = {"access_token": PAGE_ACCESS_TOKEN}
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, json=payload, params=params)
+        resp = await client.post(url, json=payload, headers=AUTH_HEADERS)
         if resp.status_code != 200:
             logger.error("Ошибка ответа на комментарий: %s", resp.text)
         else:
