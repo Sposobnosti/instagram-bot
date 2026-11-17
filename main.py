@@ -183,16 +183,88 @@ def mark_replied(user_id: str) -> None:
     _save_state()
 
 
-def already_sent_trigger_group(key: str) -> bool:
+# ---------------------------------------------------------------------------
+# Постоянное хранилище (Upstash Redis через REST API).
+# Диск на Render эфемерный: bot_state.json стирается при КАЖДОМ редеплое
+# (а редеплой происходил при каждом продлении токена). Из-за этого:
+#   1) пропадала запись "кому уже отправляли" — человек снова получал то же
+#      сообщение на те же слова;
+#   2) пропадала дата последнего продления токена — бот считал, что токен
+#      не продлевался никогда, и продлевал его снова (раз в сутки, т.к.
+#      Instagram разрешает продление не чаще, чем раз в 24 часа).
+# Теперь эти данные хранятся в Upstash Redis и переживают любые редеплои.
+# Если переменные UPSTASH_* не заданы — бот работает по-старому (только
+# память + bot_state.json), ничего не ломается.
+# ---------------------------------------------------------------------------
+UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL", "").rstrip("/")
+UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+KV_ENABLED = bool(UPSTASH_URL and UPSTASH_TOKEN)
+
+if KV_ENABLED:
+    logger.info("Постоянное хранилище Upstash Redis подключено")
+else:
+    logger.warning(
+        "UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN не заданы — история отправок "
+        "и дата продления токена будут сбрасываться при каждом редеплое на Render"
+    )
+
+
+async def _kv(*command):
+    """Выполняет одну команду Redis через REST API Upstash. Возвращает
+    поле result из ответа или None при ошибке/отключённом хранилище."""
+    if not KV_ENABLED:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                UPSTASH_URL,
+                json=[str(part) for part in command],
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+            )
+        if resp.status_code == 200:
+            return resp.json().get("result")
+        logger.error("Upstash вернул ошибку %s: %s", resp.status_code, resp.text)
+    except httpx.HTTPError as e:
+        logger.error("Сетевая ошибка при обращении к Upstash: %s", e)
+    return None
+
+
+async def already_sent_trigger_group(key: str) -> bool:
     """True, если этому человеку уже когда-либо отправлялось сообщение
     по этой группе триггеров (послание/способности/чакры) — навсегда,
-    без ограничения по времени."""
-    return key in _sent_trigger_groups
+    без ограничения по времени и независимо от редеплоев."""
+    if key in _sent_trigger_groups:
+        return True
+    if await _kv("EXISTS", f"sent:{key}") == 1:
+        # Кэшируем в памяти, чтобы не ходить в Redis повторно за тем же ключом
+        _sent_trigger_groups[key] = time.time()
+        return True
+    return False
 
 
-def mark_trigger_group_sent(key: str) -> None:
-    _sent_trigger_groups[key] = time.time()
+async def mark_trigger_group_sent(key: str) -> None:
+    now = time.time()
+    _sent_trigger_groups[key] = now
     _save_state()
+    await _kv("SET", f"sent:{key}", int(now))
+
+
+async def get_last_token_refresh() -> float:
+    """Время последнего успешного продления токена (unix-время). Берётся
+    максимум из памяти и из Redis — Redis переживает редеплои."""
+    last = _last_reply_at.get("token_refresh", 0)
+    stored = await _kv("GET", "token_refresh_at")
+    if stored:
+        try:
+            last = max(last, float(stored))
+        except ValueError:
+            pass
+    return last
+
+
+async def set_last_token_refresh() -> None:
+    mark_replied("token_refresh")
+    await _kv("SET", "token_refresh_at", int(time.time()))
 
 
 # ---------------------------------------------------------------------------
@@ -285,13 +357,15 @@ async def handle_direct_message(event: dict):
     # (хоть месяц назад), повторно он не придёт, сколько бы раз человек
     # ни писал триггерное слово снова.
     cooldown_key = f"{sender_id}:{group}"
-    if already_sent_trigger_group(cooldown_key):
+    if await already_sent_trigger_group(cooldown_key):
         logger.info("Пользователю %s уже отправляли сообщение по теме %s ранее, повторно не шлём", sender_id, group)
         return
 
+    # Помечаем ДО отправки: если почти одновременно придут два сообщения с
+    # триггером, второе уже увидит отметку и не получит дубль.
+    await mark_trigger_group_sent(cooldown_key)
     await send_typing_indicator(sender_id)
     await send_direct_message(sender_id, build_dm_message(group))
-    mark_trigger_group_sent(cooldown_key)
 
 
 def build_dm_message(group: str) -> dict:
@@ -399,13 +473,13 @@ async def handle_comment(value: dict):
     # в час — повторный комментарий/сообщение с тем же триггером после
     # уже отправленного ответа игнорируется.
     cooldown_key = f"{from_user}:{group}"
-    if already_sent_trigger_group(cooldown_key):
+    if await already_sent_trigger_group(cooldown_key):
         logger.info("Пользователю %s уже отправляли ответ по теме %s ранее, повторно не отвечаем", from_user, group)
         return
 
+    await mark_trigger_group_sent(cooldown_key)
     reply_text = build_comment_reply(text, from_username)
     await reply_to_comment(comment_id, reply_text)
-    mark_trigger_group_sent(cooldown_key)
 
     # Кроме публичного ответа под комментарием, отправляем тому же
     # человеку полный текст в Direct — через специальный механизм Private
@@ -615,18 +689,21 @@ async def maybe_refresh_ig_token():
     умолчанию 45 дней) пытается заранее продлить токен Instagram, пока он
     ещё живой, чтобы не доводить до ситуации "токен умер, бот молчит".
     """
-    last_refresh = _last_reply_at.get("token_refresh", 0)
+    last_refresh = await get_last_token_refresh()
     if time.time() - last_refresh < TOKEN_REFRESH_INTERVAL_SECONDS:
         return
 
     new_token = await refresh_ig_token()
     if not new_token:
-        # Не отмечаем mark_replied — попробуем снова при следующей проверке,
-        # а не ждать ещё 45 дней после неудачной попытки.
+        # Не отмечаем время продления — попробуем снова при следующей
+        # проверке, а не ждать ещё 45 дней после неудачной попытки.
         return
 
+    # Запоминаем время продления ДО записи токена на Render: запись
+    # переменной запускает редеплой, и процесс может быть остановлен
+    # раньше, чем успеет сохранить отметку.
+    await set_last_token_refresh()
     saved = await update_render_env_var(new_token)
-    mark_replied("token_refresh")
 
     if saved:
         await send_telegram_alert(
@@ -675,8 +752,8 @@ async def refresh_token_now(request: Request):
             ),
         }
 
+    await set_last_token_refresh()  # сбрасываем обычный 45-дневный таймер от этого момента
     saved = await update_render_env_var(new_token)
-    mark_replied("token_refresh")  # сбрасываем обычный 45-дневный таймер от этого момента
 
     if saved:
         await send_telegram_alert("Токен Instagram обновлён вручную и сохранён на Render ✅")
