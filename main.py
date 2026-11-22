@@ -33,6 +33,7 @@ from config import (
     GRAPH_API_VERSION,
     get_dm_text,
     COMMENT_REPLY_VARIANTS,
+    COMMENT_REPLY_BY_GROUP,
     REPLY_COOLDOWN_SECONDS,
     TELEGRAM_ALERT_BOT_TOKEN,
     TELEGRAM_ALERT_CHAT_ID,
@@ -478,7 +479,7 @@ async def handle_comment(value: dict):
         return
 
     await mark_trigger_group_sent(cooldown_key)
-    reply_text = build_comment_reply(text, from_username)
+    reply_text = build_comment_reply(text, from_username, group)
     await reply_to_comment(comment_id, reply_text)
 
     # Кроме публичного ответа под комментарием, отправляем тому же
@@ -488,7 +489,7 @@ async def handle_comment(value: dict):
     await send_private_reply_to_comment(comment_id, build_dm_message(group))
 
 
-def build_comment_reply(incoming_text: str, username: str | None = None) -> str:
+def build_comment_reply(incoming_text: str, username: str | None = None, group: str | None = None) -> str:
     """
     Случайно выбирает один из нескольких вариантов ответа (см.
     COMMENT_REPLY_VARIANTS в config.py), чтобы под разными постами не
@@ -497,7 +498,9 @@ def build_comment_reply(incoming_text: str, username: str | None = None) -> str:
     @username в начало — тогда человек получает уведомление, что ему
     ответили, а не просто видит безадресный комментарий.
     """
-    reply = random.choice(COMMENT_REPLY_VARIANTS)
+    # Для «послания» — «записал тебя / ты в очереди», для остальных тем —
+    # просто «ответил в личку», без обещания очереди.
+    reply = random.choice(COMMENT_REPLY_BY_GROUP.get(group) or COMMENT_REPLY_VARIANTS)
     if username:
         reply = f"@{username} {reply}"
     return reply
