@@ -204,7 +204,7 @@ CHAKRY_LINK = "https://t.me/proraskritie/37"
 # на конкурирующий мессенджер, поэтому в текстах, которые видит клиент,
 # используются именно они. Сами редиректы (301 на реальные t.me-ссылки
 # выше) реализованы в main.py: /go/channel и /go/chakry.
-SITE_BASE_URL = os.getenv("SITE_BASE_URL", "https://proraskritie.ru")
+SITE_BASE_URL = os.getenv("SITE_BASE_URL", "https://proraskritie.com")  # одна ссылка для всех: из России сервер сам переводит на .ru
 CHANNEL_REDIRECT_LINK = f"{SITE_BASE_URL}/go/channel"
 CHAKRY_REDIRECT_LINK = f"{SITE_BASE_URL}/go/chakry"
 
