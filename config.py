@@ -204,21 +204,31 @@ CHAKRY_LINK = "https://t.me/proraskritie/37"
 # на конкурирующий мессенджер, поэтому в текстах, которые видит клиент,
 # используются именно они. Сами редиректы (301 на реальные t.me-ссылки
 # выше) реализованы в main.py: /go/channel и /go/chakry.
-SITE_BASE_URL = os.getenv("SITE_BASE_URL", "https://proraskritie.com")  # одна ссылка для всех: из России сервер сам переводит на .ru
+SITE_BASE_URL = os.getenv("SITE_BASE_URL", "https://proraskritie.ru")
 CHANNEL_REDIRECT_LINK = f"{SITE_BASE_URL}/go/channel"
 CHAKRY_REDIRECT_LINK = f"{SITE_BASE_URL}/go/chakry"
 
-# Ссылки на страницы сайта (короткие /go/... настроены на сервере сайта,
-# каждая подписана — в админке сайта видно, сколько людей пришло по каждой)
-TEST_LINK = f"{SITE_BASE_URL}/go/test"
-CHAKRY_VIDEO_LINK = f"{SITE_BASE_URL}/go/chakry-video"
-ANGELS_LINK = f"{SITE_BASE_URL}/go/angely"
-SPINA_LINK = f"{SITE_BASE_URL}/go/spina"
-MATRICA_LINK = f"{SITE_BASE_URL}/go/matrica"
-KURS_LINK = f"{SITE_BASE_URL}/go/kurs"
-SESSIA_LINK = f"{SITE_BASE_URL}/go/sessia"
-OTZYVY_LINK = f"{SITE_BASE_URL}/go/otzyvy"
+# Ссылки на страницы сайта — через умную ссылку go.proraskritie.com: она сама
+# выбирает рабочий адрес (.ru для России, .com для Украины и других стран)
+# и сохраняет страницу. utm_source подписывает ссылку — в админке сайта видно,
+# сколько людей пришло по каждой.
+LINK_BASE = os.getenv("IG_LINK_BASE", "https://go.proraskritie.com")
+def _site(path: str, tag: str) -> str:
+    page, _, anchor = path.partition("#")
+    url = f"{LINK_BASE}{page}{'&' if '?' in page else '?'}utm_source=ig_{tag}"
+    return url + (f"#{anchor}" if anchor else "")
 
+TEST_LINK = _site("/Test.html", "test")
+CHAKRY_VIDEO_LINK = _site("/Practices.html?tab=chakra", "chakry_video")
+ANGELS_LINK = _site("/Angels.html", "angely")
+SPINA_LINK = _site("/Spine.html", "spina")
+MATRICA_LINK = _site("/Matrix.html", "matrica")
+KURS_LINK = _site("/Raskrytie.html", "kurs")
+SESSIA_LINK = _site("/Session.html", "sessia")
+OTZYVY_LINK = _site("/#reviews", "otzyvy")
+
+# В каждом ответе — ОДНА ссылка: когда ссылок несколько, человек часто жмёт
+# последнюю и уходит не туда.
 DM_TEXT_VARIANTS_POSLANIE = [
     (
         "Привет 🤍 Твой запрос на послание принят и записан.\n\n"
@@ -229,8 +239,6 @@ DM_TEXT_VARIANTS_POSLANIE = [
         "какая способность раскроется у тебя первой. Там же видео про "
         "сверхспособности, которые уже есть в тебе 🤍\n\n"
         f"Пройти тест ⬇️\n{TEST_LINK}\n\n"
-        "А если часто видишь повторяющиеся числа — 11:11, 222, 333 — "
-        f"здесь можно узнать, что они значат ⬇️\n{ANGELS_LINK}\n\n"
         "Как дойду до тебя — напишу лично 🪽"
     ),
     (
@@ -248,8 +256,6 @@ DM_TEXT_VARIANTS_POSLANIE = [
         "небыстро — честно говорю, это может занять не один месяц 🪽\n\n"
         "А пока узнай, какая способность раскроется у тебя первой — "
         f"бесплатный тест на 2 минуты и видео ⬇️\n{TEST_LINK}\n\n"
-        "Видишь повторяющиеся числа? Послания ангелов по числам — "
-        f"здесь ⬇️\n{ANGELS_LINK}\n\n"
         "Напишу лично, как дойду до тебя 🪽🤍"
     ),
 ]
@@ -318,8 +324,6 @@ DM_TEXT_VARIANTS_KURS = [
     (
         "Привет 🤍 Начать стоит с курса «Про Раскрытие» — здесь программа, "
         f"отзывы учеников и цены ⬇️\n\n{KURS_LINK}\n\n"
-        "Если хочешь сначала узнать, какая способность раскроется у тебя "
-        f"первой, — бесплатный тест на 2 минуты ⬇️\n{TEST_LINK}\n\n"
         "Остались вопросы — пиши сюда, отвечу лично 🪽"
     ),
 ]
@@ -372,7 +376,7 @@ def _fallback(group: str) -> str:
 
 def get_dm_text(group: str) -> str:
     """Возвращает случайный вариант текста для указанной группы триггера."""
-    return random.choice(DM_TEXT_VARIANTS[group]) + _fallback(group)
+    return random.choice(DM_TEXT_VARIANTS[group])
 
 
 # Оставлено для возможного будущего использования, если Meta добавит
